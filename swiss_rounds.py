@@ -402,7 +402,7 @@ tournament = Tournament()
 # players = ["Alice", "Bob", "Charlie", "Diana", "Eve", "Frank"]
 players = ["Heath"]
 names = pd.read_csv("swiss_names.csv")
-names = names["first_name"].iloc[0:60].to_list()
+names = names["first_name"].iloc[0:124].to_list()
 players = players + names
 
 for i, name in enumerate(players):
@@ -411,6 +411,10 @@ for i, name in enumerate(players):
     )  # why not use add players?
 
 total_rounds, phase1, point_threshold, top_cut = get_rounds(len(players))
+print(f"Total rounds: {total_rounds}")
+print(f"Phase 1 rounds: {phase1}")
+print(f"Minimum points needed to advance to phase 2: {point_threshold}")
+print(f"Players in top cut: {top_cut}")
 for _ in range(total_rounds):
     round_number = tournament.start_new_round()
     print(f"\nRound {round_number}")
