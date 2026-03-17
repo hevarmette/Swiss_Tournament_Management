@@ -109,16 +109,19 @@ def draw_match(
 def get_visual_match_numbers(round_num, total_rounds):
     """
     Helper function to calculate the visual vertical order of matches
-    for a folding seed bracket. This prevents the rendered lines from
-    overlapping when drawing fold-paired brackets.
+    for a standard bracket (e.g. 1v8, 4v5, 3v6, 2v7).
+    Uses parity to ensure highest seeds are positioned on the outer edges.
     """
     order = [1]
     for r in range(total_rounds, round_num, -1):
         next_order = []
         L = 2 ** (total_rounds - r + 1)
         for x in order:
-            next_order.append(x)
-            next_order.append(L - x + 1)
+            # Odd seeds stay on top, even seeds go to the bottom of their sub-bracket
+            if x % 2 == 1:
+                next_order.extend([x, L - x + 1])
+            else:
+                next_order.extend([L - x + 1, x])
         order = next_order
     return order
 
@@ -696,21 +699,63 @@ class SingleEliminationBracket:
                 winner_name = ""
 
                 if match:
-                    p1_name = (
-                        self.tournament.players[match.player1_id].name
-                        if match.player1_id
-                        else ""
-                    )
-                    if match.is_bye:
-                        p2_name = "(BYE)"
-                        # If a match is a bye, player 1 automatically advances
-                        winner_name = p1_name
-                    else:
-                        p2_name = (
-                            self.tournament.players[match.player2_id].name
-                            if match.player2_id
+                    if swiss_round_num == 1:
+                        # First round maps directly to the match structure
+                        p1_name = (
+                            self.tournament.players[match.player1_id].name
+                            if match.player1_id
                             else ""
                         )
+                        if match.is_bye:
+                            p2_name = "(BYE)"
+                            # If a match is a bye, player 1 automatically advances
+                            winner_name = p1_name
+                        else:
+                            p2_name = (
+                                self.tournament.players[match.player2_id].name
+                                if match.player2_id
+                                else ""
+                            )
+                            winner_name = (
+                                self.tournament.players[match.winner_id].name
+                                if match.winner_id
+                                else ""
+                            )
+                    else:
+                        # For R2+, dynamically fetch the correct geometric players to prevent visual line crossing!
+                        prev_round_num = swiss_round_num - 1
+                        prev_visual_match_nums = get_visual_match_numbers(
+                            prev_round_num, self.num_rounds
+                        )
+
+                        # Find exactly which matches feed into our top and bottom lines
+                        prev_top_match_num = prev_visual_match_nums[m_visual_idx * 2]
+                        prev_bot_match_num = prev_visual_match_nums[
+                            m_visual_idx * 2 + 1
+                        ]
+
+                        top_match = next(
+                            (
+                                m
+                                for m in self.rounds.get(prev_round_num, [])
+                                if m.match_number == prev_top_match_num
+                            ),
+                            None,
+                        )
+                        bot_match = next(
+                            (
+                                m
+                                for m in self.rounds.get(prev_round_num, [])
+                                if m.match_number == prev_bot_match_num
+                            ),
+                            None,
+                        )
+
+                        top_id = top_match.winner_id if top_match else None
+                        bot_id = bot_match.winner_id if bot_match else None
+
+                        p1_name = self.tournament.players[top_id].name if top_id else ""
+                        p2_name = self.tournament.players[bot_id].name if bot_id else ""
                         winner_name = (
                             self.tournament.players[match.winner_id].name
                             if match.winner_id
@@ -727,7 +772,6 @@ class SingleEliminationBracket:
                     p2_name,
                     winner_name,
                 )
-
         # Print the final generated bracket
         print(render(grid))
 
