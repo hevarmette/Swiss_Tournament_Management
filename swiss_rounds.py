@@ -4,15 +4,134 @@ import pandas as pd
 import random
 import math
 
-# import names
+# --- ASCII Bracket Configuration Constants ---
+NAME_W = 6  # Maximum number of characters displayed for a name (updated to 6 for swiss_rounds)
+COL_GAP = 8  # Number of spaces/line characters between columns
+ROUND_W = NAME_W + COL_GAP  # Total width allocated for one full round (14)
+LINE_W = ROUND_W - 1  # Width of the horizontal lines drawn under names (13)
 
 
-# 2 phase tournament structure
+def make_grid(height, width):
+    """
+    Initializes a blank 2D grid (canvas) filled with space characters.
+
+    Args:
+        height (int): The number of rows in the grid.
+        width (int): The number of columns in the grid.
+
+    Returns:
+        list of list of str: A 2D array representing the blank canvas.
+    """
+    return [[" "] * width for _ in range(height)]
+
+
+def write(grid, row, col, text):
+    """
+    Writes a string onto the grid at the specified coordinates.
+    Safely ignores characters that fall outside the grid's boundaries.
+
+    Args:
+        grid (list of list of str): The canvas to write on.
+        row (int): The starting row index (Y-coordinate).
+        col (int): The starting column index (X-coordinate).
+        text (str): The string to write onto the grid.
+    """
+    for i, ch in enumerate(text):
+        if 0 <= row < len(grid) and col + i < len(grid[row]):
+            grid[row][col + i] = ch
+
+
+def center_pad(name, w):
+    """
+    Truncates a name to the maximum allowed length, then centers it
+    within a specified width using space padding.
+
+    Args:
+        name (str): The string to format.
+        w (int): The total width to center the string within.
+
+    Returns:
+        str: The formatted, centered string.
+    """
+    return name[:NAME_W].center(w)
+
+
+def render(grid):
+    """
+    Converts the 2D grid into a single, printable multi-line string.
+
+    Args:
+        grid (list of list of str): The canvas to render.
+
+    Returns:
+        str: The final ASCII art representation, with trailing whitespace removed.
+    """
+    return "\n".join("".join(row).rstrip() for row in grid)
+
+
+def draw_match(
+    grid, row_top, row_bot, col_in, col_out, top_name, bot_name, winner_name
+):
+    """
+    Draws a single tournament matchup on the grid, including the competitors'
+    names, connecting lines, and the winner's name advancing to the next round.
+    """
+    # Calculate the exact middle row for the junction and winner's line
+    row_mid = (row_top + row_bot) // 2
+
+    # 1. Write competitor names centered directly ABOVE their respective lines (row - 1)
+    write(grid, row_top - 1, col_in, center_pad(top_name, LINE_W))
+    write(grid, row_bot - 1, col_in, center_pad(bot_name, LINE_W))
+
+    # 2. Draw horizontal lines for both competitors
+    for c in range(col_in, col_out - 1):
+        grid[row_top][c] = "-"
+        grid[row_bot][c] = "-"
+
+    # 3. Draw the vertical connector connecting the top and bottom lines
+    for r in range(row_top, row_bot + 1):
+        grid[r][col_out - 1] = "|"
+
+    # Place junction markers (+) at the corners and the middle intersection
+    grid[row_top][col_out - 1] = "+"
+    grid[row_bot][col_out - 1] = "+"
+    grid[row_mid][col_out - 1] = "+"
+
+    # 4. Draw the horizontal line for the winner branching off the middle junction
+    for c in range(col_out, col_out + LINE_W):
+        if c < len(grid[0]):
+            grid[row_mid][c] = "-"
+
+    # 5. Write the winner's name centered directly ABOVE their new line
+    write(grid, row_mid - 1, col_out, center_pad(winner_name, LINE_W))
+
+
+def get_visual_match_numbers(round_num, total_rounds):
+    """
+    Helper function to calculate the visual vertical order of matches
+    for a folding seed bracket. This prevents the rendered lines from
+    overlapping when drawing fold-paired brackets.
+    """
+    order = [1]
+    for r in range(total_rounds, round_num, -1):
+        next_order = []
+        L = 2 ** (total_rounds - r + 1)
+        for x in order:
+            next_order.append(x)
+            next_order.append(L - x + 1)
+        order = next_order
+    return order
+
+
+# ==========================================
+# Original Swiss Rounds Logic
+# ==========================================
+
+
 def get_rounds(num_players):
     if num_players < 4:
         raise ValueError("Tournament requires at least 4 players")
 
-    # Tournament brackets with (max_players, total_rounds)
     brackets = [
         (8, 3, 3, None, None),
         (16, 4, 4, None, 2),
@@ -54,9 +173,7 @@ class Player:
     name: str
     matches: List[Match] = field(default_factory=list)
     tournament: Optional["Tournament"] = field(default=None, repr=False)
-    dropped: bool = (
-        False  # True if the player has voluntarily dropped from the tournament
-    )
+    dropped: bool = False
 
     def add_match(
         self, opponent_id: str, won: bool, round_number: int, is_bye: bool = False
@@ -105,7 +222,6 @@ class Player:
         all_opp_opp_rates = []
         for opp_id in self.get_opponents():
             opponent = self.tournament.players[opp_id]
-            # Get this opponent's opponents' win rates
             for opp_opp_id in opponent.get_opponents():
                 opp_opp_win_rate = self.tournament.players[opp_opp_id].win_percentage
                 all_opp_opp_rates.append(max(0.25, opp_opp_win_rate))
@@ -132,19 +248,16 @@ class Tournament:
         self.current_round = 0
         self.bye_history = set()
 
-    def __str__(self):  # need?
-        return f"{self.name} ({self.wins}-{self.losses}, {self.win_percentage:.1%})"
-
     def add_players(self, names: List[str]) -> List[str]:
         player_ids = []
         for name in names:
-            player_id = self.add_player(name, name)  # how does this function call work?
+            player_id = self.add_player(name, name)
             player_ids.append(player_id)
         return player_ids
 
     def add_player(self, player_id: str, name: str):
         player = Player(player_id, name)
-        player.tournament = self  # Set tournament reference
+        player.tournament = self
         self.players[player_id] = player
 
     def start_new_round(self) -> int:
@@ -163,8 +276,6 @@ class Tournament:
         self.bye_history.add(player_id)
 
     def drop_player(self, player_id: str):
-        # Mark a player as dropped; they are excluded from future pairings and byes.
-        # Their match history is preserved so opponent win percentages remain accurate.
         if player_id not in self.players:
             raise ValueError(f"Player {player_id} not found in tournament")
         self.players[player_id].dropped = True
@@ -172,17 +283,14 @@ class Tournament:
 
     def assign_bye(self, round_number: int) -> str:
         if round_number == 1:
-            # Random player
             bye_player_id = random.choice(list(self.players.keys()))
         else:
-            # Lowest-ranked player without a bye
             standings = self.get_standings_df()
             for _, row in standings.iterrows():
                 if row["player_id"] not in self.bye_history:
                     bye_player_id = row["player_id"]
-                    break  # why break statement i don't like them
+                    break
 
-        # Record the bye
         self.record_bye(bye_player_id, round_number)
         return bye_player_id
 
@@ -190,21 +298,16 @@ class Tournament:
         self, round_number: int, phase1_rounds: int, minimum_match_points
     ):
         pairings = []
-        # Exclude dropped players from pairings entirely; they will not receive byes
         unpaired = {pid for pid in self.players if not self.players[pid].dropped}
 
-        # Phase-1 cut: remove players below threshold from active set
         if round_number > phase1_rounds and minimum_match_points is not None:
             eliminated = {
                 p
                 for p in unpaired
                 if self.get_player_stats(p)["match_points"] < minimum_match_points
             }
-            # if eliminated:
-            #     print("Eliminated:", [self.players[p].name for p in eliminated])
             unpaired -= eliminated
 
-        # --- Round 1: full random ---
         if round_number == 1:
             pool = list(unpaired)
             random.shuffle(pool)
@@ -224,23 +327,19 @@ class Tournament:
 
             return pairings
 
-        # --- Rounds 2+: buckets by wins, pair randomly within buckets, float down if odd ---
-        # Build buckets only from active/unpaired players
         record_groups: Dict[int, List[str]] = {}
         for pid in list(unpaired):
             wins = self.players[pid].wins
             record_groups.setdefault(wins, []).append(pid)
 
         if not record_groups:
-            return pairings  # nothing to pair
+            return pairings
 
-        # Shuffle each bucket
         for grp in record_groups.values():
             random.shuffle(grp)
 
         sorted_records = sorted(record_groups.keys(), reverse=True)
 
-        # If total active is odd, assign a random bye from the lowest bracket
         total_active = sum(len(record_groups[r]) for r in sorted_records)
         if total_active % 2 == 1:
             lowest = sorted_records[-1]
@@ -250,7 +349,6 @@ class Tournament:
             candidates.remove(bye_player)
             unpaired.discard(bye_player)
             print(f"Player {bye_player} gets a bye")
-            # if bracket empty after removal, it will be skipped below
 
         carry_down: Optional[str] = None
 
@@ -259,7 +357,6 @@ class Tournament:
             if not group:
                 continue
 
-            # If there's a carry_down, try pairing it into this bucket
             if carry_down:
                 found_idx = None
                 for i, opp in enumerate(group):
@@ -272,13 +369,9 @@ class Tournament:
                     unpaired.discard(carry_down)
                     unpaired.discard(opp)
                     carry_down = None
-                # otherwise keep carry_down for the next (lower) bracket
 
-            # Pair inside the group greedily:
-            # Pop the first player, find the first legal partner in the group, pop them and pair.
             while len(group) >= 2:
                 p1 = group.pop(0)
-                # find partner that hasn't played p1
                 partner_idx = None
                 for j, cand in enumerate(group):
                     if self.can_pair(p1, cand):
@@ -287,32 +380,27 @@ class Tournament:
                 if partner_idx is not None:
                     p2 = group.pop(partner_idx)
                 else:
-                    # no legal partner found in this bucket: fallback to the first element (may be a rematch)
                     p2 = group.pop(0)
                 pairings.append((p1, p2))
                 unpaired.discard(p1)
                 unpaired.discard(p2)
 
-            # If one leftover in the group, it becomes carry_down (unless we already have one)
             if len(group) == 1:
                 last = group.pop()
                 if carry_down is None:
                     carry_down = last
                 else:
-                    # Try to pair them if possible; otherwise pair anyway to avoid deadlock.
                     if self.can_pair(carry_down, last):
                         pairings.append((carry_down, last))
                         unpaired.discard(carry_down)
                         unpaired.discard(last)
                         carry_down = None
                     else:
-                        # fallback: pair them even if it's a rematch
                         pairings.append((carry_down, last))
                         unpaired.discard(carry_down)
                         unpaired.discard(last)
                         carry_down = None
 
-        # Final safety: if a carry_down somehow remains, try to pair with any leftover unpaired
         if carry_down:
             remaining = [pid for pid in unpaired if pid != carry_down]
             if remaining:
@@ -321,19 +409,16 @@ class Tournament:
                 unpaired.discard(carry_down)
                 unpaired.discard(opp)
             else:
-                # no one remains, grant bye
                 self.record_bye(carry_down, round_number)
                 unpaired.discard(carry_down)
                 print(f"Player {carry_down} gets a bye")
 
-        # Sanity check: no player should appear in >1 pairing this round
         participants = []
         for a, b in pairings:
             participants.extend([a, b])
         dupes = {x for x in participants if participants.count(x) > 1}
         if dupes:
             print("Warning: duplicate participants in this round's pairings:", dupes)
-            # In debug mode you might raise an exception here.
 
         return pairings
 
@@ -352,7 +437,6 @@ class Tournament:
     def get_standings_df(self) -> pd.DataFrame:
         data = []
         for player_id, player in self.players.items():
-            # Exclude dropped players from standings
             if player.dropped:
                 continue
             data.append(
@@ -376,7 +460,15 @@ class Tournament:
         ).reset_index(drop=True)
 
     def can_pair(self, player1_id: str, player2_id: str) -> bool:
-        return not self.players[player1_id].has_played(player2_id)
+        """
+        Determines if two players can be paired together.
+        In standard Swiss, players cannot be paired if they have already played each other.
+        """
+        if player1_id == player2_id:
+            return False
+
+        player1 = self.players[player1_id]
+        return not player1.has_played(player2_id)
 
     def print_standings(self, top_cut, long_line=51, short_line=49):
         standings = self.get_standings_df()
@@ -384,7 +476,6 @@ class Tournament:
         def line_for(points):
             return "-" * (short_line if points < 10 else long_line)
 
-        # Print header line
         print(line_for(standings.loc[0, "match_points"]))
 
         more_spaces = False
@@ -392,11 +483,9 @@ class Tournament:
             if i == top_cut:
                 print(line_for(row["match_points"]))
 
-            # Once a player with < 10 points is found, all subsequent rows use extra spacing
             if row["match_points"] < 10:
                 more_spaces = True
 
-            # Choose spacing based on the flag
             spacing = "   " if more_spaces else "  "
 
             print(
@@ -407,17 +496,14 @@ class Tournament:
                 f"|  {row['opp_opp_win_percentage']:.2%}|"
             )
 
-        # Print footer line
         print(line_for(standings.loc[0, "match_points"]))
 
 
 @dataclass
 class BracketMatch:
-    """Represents a single match in the elimination bracket."""
-
     round_number: int
-    match_number: int  # position within the round (1-indexed)
-    player1_id: Optional[str]  # None until filled in from previous round
+    match_number: int
+    player1_id: Optional[str]
     player2_id: Optional[str]
     winner_id: Optional[str] = None
     is_bye: bool = False
@@ -432,65 +518,29 @@ class BracketMatch:
 
 
 class SingleEliminationBracket:
-    """
-    Single-elimination bracket seeded from a ranked list of player IDs.
-
-    Seeding convention: top seed (seed 1) faces the bottom seed (seed N),
-    seed 2 faces seed N-1, etc.  When the field is not a power of two the
-    highest seeds receive first-round byes; the lowest-seeded players play in
-    immediately.
-
-    Example – 10 players:
-        next power of two = 16  →  6 byes (seeds 1-6 advance automatically)
-        Round 1 matches: (7 vs 10), (8 vs 9)
-        Round 2 and beyond fill in as results are recorded.
-    """
-
     def __init__(self, seeded_player_ids: List[str], tournament: "Tournament"):
-        """
-        Parameters
-        ----------
-        seeded_player_ids : list of player_id strings ordered best-to-worst
-                            (index 0 = seed 1, index -1 = last seed).
-        tournament        : Tournament instance (used for name look-ups).
-        """
         self.tournament = tournament
         self.size = len(seeded_player_ids)
         if self.size < 2:
             raise ValueError("Need at least 2 players for a bracket.")
 
-        # Seeds are 1-indexed; seeds[1] = best player
         self.seeds: Dict[int, str] = {
             i + 1: pid for i, pid in enumerate(seeded_player_ids)
         }
 
-        # next power-of-two bracket size
         self.bracket_size = 2 ** math.ceil(math.log2(self.size))
         self.num_byes = self.bracket_size - self.size
 
-        # rounds[r] = list of BracketMatch objects for round r (1-indexed)
         self.rounds: Dict[int, List[BracketMatch]] = {}
         self.num_rounds = int(math.log2(self.bracket_size))
         self.current_round = 1
 
         self._build_first_round()
 
-    # ------------------------------------------------------------------
-    # Private helpers
-    # ------------------------------------------------------------------
-
     def _build_first_round(self):
-        """
-        Construct the first-round match-ups.
-
-        Byes are awarded to the top seeds.  The remaining players are paired
-        lowest vs highest (seed N vs seed num_byes+1, etc.).
-        """
         first_round_matches: List[BracketMatch] = []
         match_num = 1
 
-        # Top `num_byes` seeds advance automatically – add them as bye slots
-        # (stored so downstream rounds can reference them as "winners").
         for seed in range(1, self.num_byes + 1):
             m = BracketMatch(
                 round_number=1,
@@ -503,9 +553,7 @@ class SingleEliminationBracket:
             first_round_matches.append(m)
             match_num += 1
 
-        # Remaining players play: pair (num_byes+1 vs size), (num_byes+2 vs size-1), …
         playing_seeds = list(range(self.num_byes + 1, self.size + 1))
-        # pair top of this list vs bottom
         lo, hi = 0, len(playing_seeds) - 1
         while lo < hi:
             top_seed = playing_seeds[lo]
@@ -522,23 +570,20 @@ class SingleEliminationBracket:
             hi -= 1
 
         self.rounds[1] = first_round_matches
-
-        # Auto-advance byes so round 2 can be built once R1 real matches finish
         self._try_advance_round()
 
     def _all_round_complete(self, round_number: int) -> bool:
         return all(m.winner_id is not None for m in self.rounds.get(round_number, []))
 
     def _try_advance_round(self):
-        """Build the next round's shell whenever the current round is fully resolved."""
         while self._all_round_complete(self.current_round):
             next_round = self.current_round + 1
             if next_round > self.num_rounds:
-                break  # tournament is over
+                break
 
             winners = [m.winner_id for m in self.rounds[self.current_round]]
             next_matches: List[BracketMatch] = []
-            # pair winners: first vs last, second vs second-to-last, …
+
             lo, hi = 0, len(winners) - 1
             match_num = 1
             while lo < hi:
@@ -556,12 +601,7 @@ class SingleEliminationBracket:
             self.rounds[next_round] = next_matches
             self.current_round = next_round
 
-    # ------------------------------------------------------------------
-    # Public interface
-    # ------------------------------------------------------------------
-
     def get_current_matches(self) -> List[BracketMatch]:
-        """Return all non-bye matches that still need a result this round."""
         return [
             m
             for m in self.rounds.get(self.current_round, [])
@@ -569,15 +609,6 @@ class SingleEliminationBracket:
         ]
 
     def record_result(self, round_number: int, match_number: int, winner_id: str):
-        """
-        Record the winner of a bracket match.
-
-        Parameters
-        ----------
-        round_number  : round the match belongs to.
-        match_number  : match_number attribute of the BracketMatch.
-        winner_id     : player_id of the winner (must be one of the match's players).
-        """
         matches = self.rounds.get(round_number)
         if matches is None:
             raise ValueError(f"Round {round_number} does not exist in this bracket.")
@@ -595,44 +626,110 @@ class SingleEliminationBracket:
         self._try_advance_round()
 
     def get_champion(self) -> Optional[str]:
-        """Return the champion's player_id once the final is decided, else None."""
         final_round = self.rounds.get(self.num_rounds)
         if final_round and len(final_round) == 1 and final_round[0].winner_id:
             return final_round[0].winner_id
         return None
 
     def print_bracket(self):
-        """Pretty-print every round of the bracket."""
+        """Pretty-print every round of the bracket using ASCII art."""
         print(f"\n{'='*55}")
         print(f"  Single Elimination Bracket  ({self.size} players)")
         print(f"  Bracket size: {self.bracket_size}  |  Byes: {self.num_byes}")
-        print(f"{'='*55}")
-        for r in range(1, max(self.rounds.keys()) + 1):
-            label = (
-                "FINAL"
-                if r == self.num_rounds
-                else ("SEMI-FINALS" if r == self.num_rounds - 1 else f"Round {r}")
+        print(f"{'='*55}\n")
+
+        if self.num_rounds == 0:
+            print("No matches to display.")
+            return
+
+        # Calculate dimensions
+        HEIGHT = 2 * self.bracket_size + 5
+        WIDTH = ROUND_W * (self.num_rounds + 1) + 5
+        grid = make_grid(HEIGHT, WIDTH)
+
+        # Generate intelligent headers
+        for i in range(self.num_rounds + 1):
+            if i == self.num_rounds:
+                header = "Champion"
+            elif i == self.num_rounds - 1:
+                header = "Finals"
+            elif i == self.num_rounds - 2:
+                header = "Semifinals"
+            elif i == self.num_rounds - 3:
+                header = "Quarterfinals"
+            else:
+                header = f"Round {i + 1}"
+            write(grid, 0, i * ROUND_W, center_pad(header, LINE_W))
+
+        # The Algorithm: Loop through rounds and draw matches
+        for r in range(self.num_rounds):
+            col_in = r * ROUND_W
+            col_out = (r + 1) * ROUND_W
+
+            # Calculate geometric spacing for the current round
+            start_row = 3 + (2**r) - 1
+            diff = 2 ** (r + 1)
+            step = 2 ** (r + 2)
+
+            # Use 1-indexed round for tracking within the model
+            swiss_round_num = r + 1
+            visual_match_nums = get_visual_match_numbers(
+                swiss_round_num, self.num_rounds
             )
-            print(f"\n  --- {label} ---")
-            for m in self.rounds[r]:
-                p1_name = (
-                    self.tournament.players[m.player1_id].name
-                    if m.player1_id
-                    else "TBD"
+
+            for m_visual_idx, match_num in enumerate(visual_match_nums):
+                # Fetch the match object corresponding to its visual position
+                match = next(
+                    (
+                        m
+                        for m in self.rounds.get(swiss_round_num, [])
+                        if m.match_number == match_num
+                    ),
+                    None,
                 )
-                p2_name = (
-                    self.tournament.players[m.player2_id].name
-                    if m.player2_id
-                    else "TBD"
+
+                row_top = start_row + m_visual_idx * step
+                row_bot = row_top + diff
+
+                p1_name = ""
+                p2_name = ""
+                winner_name = ""
+
+                if match:
+                    p1_name = (
+                        self.tournament.players[match.player1_id].name
+                        if match.player1_id
+                        else ""
+                    )
+                    if match.is_bye:
+                        p2_name = "(BYE)"
+                        # If a match is a bye, player 1 automatically advances
+                        winner_name = p1_name
+                    else:
+                        p2_name = (
+                            self.tournament.players[match.player2_id].name
+                            if match.player2_id
+                            else ""
+                        )
+                        winner_name = (
+                            self.tournament.players[match.winner_id].name
+                            if match.winner_id
+                            else ""
+                        )
+
+                draw_match(
+                    grid,
+                    row_top,
+                    row_bot,
+                    col_in,
+                    col_out,
+                    p1_name,
+                    p2_name,
+                    winner_name,
                 )
-                winner_name = (
-                    self.tournament.players[m.winner_id].name if m.winner_id else None
-                )
-                if m.is_bye:
-                    print(f"    [{m.match_number}] {p1_name} — BYE → advances")
-                else:
-                    result = f"  → {winner_name}" if winner_name else ""
-                    print(f"    [{m.match_number}] {p1_name} vs {p2_name}{result}")
+
+        # Print the final generated bracket
+        print(render(grid))
 
         champion = self.get_champion()
         if champion:
@@ -641,65 +738,64 @@ class SingleEliminationBracket:
         print(f"{'='*55}\n")
 
 
-# if __name__ == "__main__":
-# Create tournament and add players
-tournament = Tournament()
+# ==========================================
+# Main Test Execution
+# ==========================================
 
-# players = ["Alice", "Bob", "Charlie", "Diana", "Eve", "Frank"]
-players = ["Heath"]
-names = pd.read_csv("swiss_names.csv")
-names = names["first_name"].iloc[0:124].to_list()
-players = players + names
+if __name__ == "__main__":
+    tournament = Tournament()
 
-for i, name in enumerate(players):
-    tournament.add_player(
-        f"P{i+1}", name.strip() if len(name) < 6 else name[:6]
-    )  # why not use add players?
+    players = ["Heath"]
+    try:
+        names = pd.read_csv("swiss_names.csv")
+        names = names["first_name"].iloc[0:63].to_list()
+        players = players + names
+    except Exception:
+        # Fallback if csv goes missing
+        players += ["Alice", "Bob", "Charlie", "Diana", "Eve", "Frank"]
 
-total_rounds, phase1, point_threshold, top_cut = get_rounds(len(players))
-print(f"Total rounds: {total_rounds}")
-print(f"Phase 1 rounds: {phase1}")
-print(f"Minimum points needed to advance to phase 2: {point_threshold}")
-print(f"Players in top cut: {top_cut}")
-for _ in range(total_rounds):
-    round_number = tournament.start_new_round()
-    print(f"\nRound {round_number}")
+    for i, name in enumerate(players):
+        tournament.add_player(f"P{i+1}", name.strip() if len(name) < 6 else name[:6])
 
-    pairings = tournament.generate_pairings(round_number, phase1, point_threshold)
+    total_rounds, phase1, point_threshold, top_cut = get_rounds(len(players))
+    print(f"Total rounds: {total_rounds}")
+    print(f"Phase 1 rounds: {phase1}")
+    print(f"Minimum points needed to advance to phase 2: {point_threshold}")
+    print(f"Players in top cut: {top_cut}")
 
-    for p1, p2 in pairings:
-        winner = random.choice([p1, p2])
-        tournament.record_match(
-            p1, p2, player1_won=(winner == p1), round_number=round_number
-        )
-        if p1 == "P1" or p2 == "P1":
-            print(
-                f"Match: {tournament.players[p1].name} vs {tournament.players[p2].name} -> Winner: {tournament.players[winner].name}"
+    for _ in range(total_rounds):
+        round_number = tournament.start_new_round()
+        print(f"\nRound {round_number}")
+
+        pairings = tournament.generate_pairings(round_number, phase1, point_threshold)
+
+        for p1, p2 in pairings:
+            winner = random.choice([p1, p2])
+            tournament.record_match(
+                p1, p2, player1_won=(winner == p1), round_number=round_number
             )
+            if p1 == "P1" or p2 == "P1":
+                print(
+                    f"Match: {tournament.players[p1].name} vs {tournament.players[p2].name} -> Winner: {tournament.players[winner].name}"
+                )
 
-# Print standings after each round
-tournament.print_standings(top_cut)
-# if round_number == 8:
-results = tournament.get_standings_df()
-results.to_csv("~/Downloads/swiss.csv")
-standings = tournament.get_standings_df()
-top_cut_ids = standings["player_id"].iloc[:top_cut].tolist()  # already ranked 1→N
+    tournament.print_standings(top_cut)
 
-bracket = SingleEliminationBracket(top_cut_ids, tournament)
-bracket.print_bracket()
+    standings = tournament.get_standings_df()
+    top_cut_ids = standings["player_id"].iloc[:top_cut].tolist()
 
-# Play through all rounds
-for round_number in range(1, bracket.num_rounds + 1):
-    for match in bracket.get_current_matches():  # skips byes automatically
-        winner = random.choice([match.player1_id, match.player2_id])
-        bracket.record_result(round_number, match.match_number, winner)
+    bracket = SingleEliminationBracket(top_cut_ids, tournament)
     bracket.print_bracket()
 
-# Check for champion
-champ_id = bracket.get_champion()
-if champ_id:
-    print(f"Champion: {tournament.players[champ_id].name}")
+    for round_number in range(1, bracket.num_rounds + 1):
+        for match in bracket.get_current_matches():
+            winner = random.choice([match.player1_id, match.player2_id])
+            bracket.record_result(round_number, match.match_number, winner)
+        bracket.print_bracket()
 
-# My stats
-stats = tournament.get_player_stats("P1")
-print(stats)
+    champ_id = bracket.get_champion()
+    if champ_id:
+        print(f"Champion: {tournament.players[champ_id].name}")
+
+    stats = tournament.get_player_stats("P1")
+    print(stats)
