@@ -3,6 +3,7 @@ from typing import List, Dict, Optional
 import pandas as pd
 import random
 import math
+import wcwidth
 
 # --- ASCII Bracket Configuration Constants ---
 NAME_W = 6  # Maximum number of characters displayed for a name (updated to 6 for swiss_rounds)
@@ -10,6 +11,22 @@ COL_GAP = 8  # Number of spaces/line characters between columns
 ROUND_W = NAME_W + COL_GAP  # Total width allocated for one full round (14)
 LINE_W = ROUND_W - 1  # Width of the horizontal lines drawn under names (13)
 
+
+def trim_visual_width(name, max_width=6):
+    current_width = 0
+    result = []
+    
+    for char in name:
+        # wcwidth returns 2 for wide chars, 1 for normal, 0 for zero-width, and -1 for control chars
+        char_width = max(0, wcwidth.wcwidth(char)) 
+        
+        if current_width + char_width > max_width:
+            break
+            
+        result.append(char)
+        current_width += char_width
+        
+    return "".join(result)
 
 def make_grid(height, width):
     """
@@ -799,7 +816,12 @@ if __name__ == "__main__":
         players += ["Alice", "Bob", "Charlie", "Diana", "Eve", "Frank"]
 
     for i, name in enumerate(players):
-        tournament.add_player(f"P{i+1}", name.strip() if len(name) < 6 else name[:6])
+        # Strip whitespace, then trim it visually to max 6 columns
+        clean_name = name.strip()
+        trimmed_name = trim_visual_width(clean_name, max_width=6)
+
+        # Add the properly sized name to the tournament
+        tournament.add_player(f"P{i+1}", trimmed_name)
 
     total_rounds, phase1, point_threshold, top_cut = get_rounds(len(players))
     print(f"Total rounds: {total_rounds}")
