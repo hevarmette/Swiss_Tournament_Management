@@ -5,7 +5,7 @@ import random
 import math
 import sqlite3
 import os
-import datetime
+from datetime import UTC, datetime
 
 try:
     import wcwidth
@@ -89,7 +89,7 @@ def load_player_from_db(player_id: str, db_path: str = DB_PATH) -> Optional[dict
 
 def upsert_player_to_db(entry: "RegistryEntry", db_path: str = DB_PATH):
     """Insert or update a player row."""
-    now = datetime.datetime.utcnow().isoformat()
+    now = datetime.now(UTC).isoformat()
     conn = get_db_connection(db_path)
     conn.execute("""
         INSERT INTO players
@@ -126,7 +126,7 @@ def save_elo_snapshot(
     won: bool,
     db_path: str = DB_PATH,
 ):
-    now = datetime.datetime.utcnow().isoformat()
+    now = datetime.now(UTC).isoformat()
     conn = get_db_connection(db_path)
     conn.execute("""
         INSERT INTO elo_snapshots
@@ -149,7 +149,7 @@ def log_tournament(
     num_rounds: int,
     db_path: str = DB_PATH,
 ):
-    now = datetime.datetime.utcnow().isoformat()
+    now = datetime.now(UTC).isoformat()
     conn = get_db_connection(db_path)
     conn.execute("""
         INSERT OR IGNORE INTO tournament_log
@@ -161,7 +161,7 @@ def log_tournament(
 
 
 def finish_tournament(tournament_id: str, db_path: str = DB_PATH):
-    now = datetime.datetime.utcnow().isoformat()
+    now = datetime.now(UTC).isoformat()
     conn = get_db_connection(db_path)
     conn.execute(
         "UPDATE tournament_log SET finished_at = ? WHERE tournament_id = ?",
@@ -637,7 +637,7 @@ class Tournament:
         self.name = name
         # Stable ID used as FK in DB tables
         self.tournament_id = tournament_id or (
-            datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S") + "_" + name[:20]
+            datetime.now(UTC).strftime("%Y%m%d_%H%M%S") + "_" + name[:20]
         )
         self.round_deltas: Dict[int, List[dict]] = {}
 
@@ -694,6 +694,12 @@ class Tournament:
         exp = expected_score(a_entry.elo, b_entry.elo)
         p1_won = random.random() < exp
         self.record_match(p1_id, p2_id, p1_won, round_number)
+        p1_name = self.players[p1_id].name
+        p2_name = self.players[p2_id].name
+        if p1_name == "Heath" or p2_name == "Heath":
+            winner_name = p1_name if p1_won else p2_name
+            loser_name  = p2_name if p1_won else p1_name
+            print(f"  Heath vs {loser_name} → {winner_name}")
         return p1_id if p1_won else p2_id
 
     def record_bye(self, player_id, round_number):
@@ -890,7 +896,7 @@ class Tournament:
         print(f"{C.BOLD}{C.WHITE}{'─'*width}{C.RESET}")
         header = (
             f"  {'#':>3}  {'Name':<16}  {'Record':^7}  "
-            f"{'Pts':>3}  {'Elo':>6}  {'Rating bar':<22}  OWP"
+            f"{'Pts':>3}  {'Elo':>6}  {'Rating bar':<18}  {'OWP':<6}  {'OOWP':<6}"
         )
         print(f"{C.DIM}{header}{C.RESET}")
         print(f"{C.GREY}  {'─'*67}{C.RESET}")
@@ -914,7 +920,8 @@ class Tournament:
                 f"  {C.BOLD}{int(row['match_points']):>3}{C.RESET}"
                 f"  {col}{elo:>6.1f}{C.RESET}"
                 f"  {bar}"
-                f"  {C.DIM}{row['opp_win_percentage']:.0%}{C.RESET}"
+                f"  {C.DIM}{row['opp_win_percentage']:.2%}{C.RESET}"
+                f"  {C.DIM}{row['opp_opp_win_percentage']:.2%}{C.RESET}"
             )
 
         print(f"{C.GREY}{'─'*width}{C.RESET}")
@@ -1220,93 +1227,93 @@ def print_elo_insights(registry: PlayerRegistry, tournament: Tournament):
 # ─────────────────────────────────────────────────────────────
 #  Main
 # ─────────────────────────────────────────────────────────────
-if __name__ == "__main__":
-    # ── Load player names ───────────────────────────────────
-    players_raw = []   # list of (player_id, display_name)
-    try:
-        names_df = pd.read_csv("swiss_names.csv")
-        for _, row in names_df.iloc[0:63].iterrows():
-            first = str(row.get("first_name", "")).strip()
-            last  = str(row.get("last_name", "")).strip()
-            cc    = str(row.get("country_code", "XX")).strip()
-            # Stable ID: first_last_countrycode (lower, no spaces)
-            stable_id = f"{first.lower()}_{last.lower()}_{cc.lower()}".replace(" ", "_")
-            display   = trim_visual_width(first, max_width=6)
-            players_raw.append((stable_id, display))
-    except Exception:
-        fallbacks = ["Alice", "Bob", "Charlie", "Diana", "Eve", "Frank"]
-        players_raw = [(n.lower(), n) for n in fallbacks]
+# if __name__ == "__main__":
+# ── Load player names ───────────────────────────────────
+players_raw = []   # list of (player_id, display_name)
+try:
+    names_df = pd.read_csv("swiss_names.csv")
+    for _, row in names_df.iloc[0:63].iterrows():
+        first = str(row.get("first_name", "")).strip()
+        last  = str(row.get("last_name", "")).strip()
+        cc    = str(row.get("country_code", "XX")).strip()
+        # Stable ID: first_last_countrycode (lower, no spaces)
+        stable_id = f"{first.lower()}_{last.lower()}_{cc.lower()}".replace(" ", "_")
+        display   = trim_visual_width(first, max_width=6)
+        players_raw.append((stable_id, display))
+except Exception:
+    fallbacks = ["Alice", "Bob", "Charlie", "Diana", "Eve", "Frank"]
+    players_raw = [(n.lower(), n) for n in fallbacks]
 
-    # Always include the host player
-    players_raw.insert(0, ("heath_local", "Heath"))
+# Always include the host player - MEEEE!!!!!
+players_raw.insert(0, ("heath_local", "Heath"))
 
-    # ── Initialise registry (loads existing Elo from DB) ────
-    registry = PlayerRegistry(db_path=DB_PATH)
-    registry.print_db_summary()
+# ── Initialise registry (loads existing Elo from DB) ────
+registry = PlayerRegistry(db_path=DB_PATH)
+registry.print_db_summary()
 
-    # ── Build a unique tournament ID for this run ────────────
-    run_id = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    tournament_name = "Swiss Championship"
-    tournament_id = f"{run_id}_{tournament_name[:20]}"
+# ── Build a unique tournament ID for this run ────────────
+run_id = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+tournament_name = "Swiss Championship"
+tournament_id = f"{run_id}_{tournament_name[:20]}"
 
-    tournament = Tournament(registry, name=tournament_name, tournament_id=tournament_id)
+tournament = Tournament(registry, name=tournament_name, tournament_id=tournament_id)
 
-    for stable_id, display in players_raw:
-        tournament.add_player(stable_id, display)
+for stable_id, display in players_raw:
+    tournament.add_player(stable_id, display)
 
-    total_rounds, phase1, point_threshold, top_cut = get_rounds(len(players_raw))
+total_rounds, phase1, point_threshold, top_cut = get_rounds(len(players_raw))
 
-    log_tournament(tournament_id, tournament_name, len(players_raw), total_rounds, DB_PATH)
+log_tournament(tournament_id, tournament_name, len(players_raw), total_rounds, DB_PATH)
 
-    # ── Tournament banner ───────────────────────────────────
-    width = 72
-    print()
-    print(f"{C.BOLD}{C.GOLD}{'█'*width}{C.RESET}")
-    print(f"{C.BOLD}{C.WHITE}{'█':^1}{'SWISS CHAMPIONSHIP — ELO EDITION':^{width-2}}{'█':^1}{C.RESET}")
-    print(f"{C.BOLD}{C.GOLD}{'█'*width}{C.RESET}")
-    print(f"{C.DIM}  {len(players_raw)} players  │  {total_rounds} rounds  │  Top {top_cut} to elimination bracket{C.RESET}")
-    print(f"{C.DIM}  Elo start: 1500  │  K-factor: 40 → 24 → 16 (by experience){C.RESET}")
-    print(f"{C.DIM}  Elo DB: {os.path.abspath(DB_PATH)}{C.RESET}")
-    print()
+# ── Tournament banner ───────────────────────────────────
+width = 72
+print()
+print(f"{C.BOLD}{C.GOLD}{'█'*width}{C.RESET}")
+print(f"{C.BOLD}{C.WHITE}{'█':^1}{'SWISS CHAMPIONSHIP — ELO EDITION':^{width-2}}{'█':^1}{C.RESET}")
+print(f"{C.BOLD}{C.GOLD}{'█'*width}{C.RESET}")
+print(f"{C.DIM}  {len(players_raw)} players  │  {total_rounds} rounds  │  Top {top_cut} to elimination bracket{C.RESET}")
+print(f"{C.DIM}  Elo start: 1500  │  K-factor: 40 → 24 → 16 (by experience){C.RESET}")
+print(f"{C.DIM}  Elo DB: {os.path.abspath(DB_PATH)}{C.RESET}")
+print()
 
-    # ── Swiss rounds ────────────────────────────────────────
-    for _ in range(total_rounds):
-        round_number = tournament.start_new_round()
-        tournament.print_round_header(round_number, total_rounds)
-        pairings = tournament.generate_pairings(round_number, phase1, point_threshold)
-        for p1, p2 in pairings:
-            tournament.simulate_round_match(p1, p2, round_number)
-        tournament.print_round_results(round_number)
+# ── Swiss rounds ────────────────────────────────────────
+for _ in range(total_rounds):
+    round_number = tournament.start_new_round()
+    # tournament.print_round_header(round_number, total_rounds)
+    pairings = tournament.generate_pairings(round_number, phase1, point_threshold)
+    for p1, p2 in pairings:
+        tournament.simulate_round_match(p1, p2, round_number)
+    # tournament.print_round_results(round_number)
 
-    # ── Final standings ─────────────────────────────────────
-    tournament.print_standings(top_cut)
+# ── Final standings ─────────────────────────────────────
+tournament.print_standings(top_cut)
 
-    # ── Elo insights ─────────────────────────────────────────
-    print_elo_insights(registry, tournament)
+# ── Elo insights ─────────────────────────────────────────
+# print_elo_insights(registry, tournament)
 
-    # ── Single-elim bracket ──────────────────────────────────
-    standings = tournament.get_standings_df()
-    top_cut_ids = standings["player_id"].iloc[:top_cut].tolist()
-    bracket = SingleEliminationBracket(top_cut_ids, tournament, registry)
+# ── Single-elim bracket ──────────────────────────────────
+standings = tournament.get_standings_df()
+top_cut_ids = standings["player_id"].iloc[:top_cut].tolist()
+bracket = SingleEliminationBracket(top_cut_ids, tournament, registry)
+bracket.print_bracket()
+
+for round_number in range(1, bracket.num_rounds + 1):
+    for match in bracket.get_current_matches():
+        bracket.simulate_match(round_number, match.match_number)
     bracket.print_bracket()
 
-    for round_number in range(1, bracket.num_rounds + 1):
-        for match in bracket.get_current_matches():
-            bracket.simulate_match(round_number, match.match_number)
-        bracket.print_bracket()
+finish_tournament(tournament_id, DB_PATH)
 
-    finish_tournament(tournament_id, DB_PATH)
+# ── Global leaderboard (now reflects career Elo) ─────────
+# registry.print_leaderboard(top_n=20, title="FINAL ELO LEADERBOARD")
+registry.print_db_summary()
 
-    # ── Global leaderboard (now reflects career Elo) ─────────
-    registry.print_leaderboard(top_n=20, title="FINAL ELO LEADERBOARD")
-    registry.print_db_summary()
-
-    champ_id = bracket.get_champion()
-    if champ_id:
-        champ = registry.get(champ_id)
-        champ_col = elo_color(champ.elo)
-        print(
-            f"{C.BOLD}{C.GOLD}  CHAMPION: "
-            f"{champ_col}{champ.name}{C.RESET}"
-            f"{C.GOLD}  (Elo {champ.elo:.0f}  |  peak {champ.peak_elo:.0f}){C.RESET}\n"
-        )
+champ_id = bracket.get_champion()
+if champ_id:
+    champ = registry.get(champ_id)
+    champ_col = elo_color(champ.elo)
+    print(
+        f"{C.BOLD}{C.GOLD}  CHAMPION: "
+        f"{champ_col}{champ.name}{C.RESET}"
+        f"{C.GOLD}  (Elo {champ.elo:.0f}  |  peak {champ.peak_elo:.0f}){C.RESET}\n"
+    )
