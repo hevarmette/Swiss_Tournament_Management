@@ -6,12 +6,7 @@ import math
 import sqlite3
 import os
 from datetime import UTC, datetime
-
-try:
-    import wcwidth
-    HAS_WCWIDTH = True
-except ImportError:
-    HAS_WCWIDTH = False
+import wcwidth
 
 
 # ─────────────────────────────────────────────────────────────
@@ -229,22 +224,18 @@ LINE_W = ROUND_W - 1
 
 
 def trim_visual_width(name: str, max_width: int = 6) -> str:
-    if HAS_WCWIDTH:
-        current_width, result = 0, []
-        for char in name:
-            char_width = max(0, wcwidth.wcwidth(char))
-            if current_width + char_width > max_width:
-                break
-            result.append(char)
-            current_width += char_width
-        return "".join(result)
-    return name[:max_width]
+    current_width, result = 0, []
+    for char in name:
+        char_width = max(0, wcwidth.wcwidth(char))
+        if current_width + char_width > max_width:
+            break
+        result.append(char)
+        current_width += char_width
+    return "".join(result)
 
 
 def visual_width(text: str) -> int:
-    if HAS_WCWIDTH:
-        return sum(max(0, wcwidth.wcwidth(ch)) for ch in text)
-    return len(text)
+    return sum(max(0, wcwidth.wcwidth(ch)) for ch in text)
 
 
 def visual_ljust(text: str, width: int) -> str:
@@ -699,7 +690,7 @@ class Tournament:
         if p1_name == "Heath" or p2_name == "Heath":
             winner_name = p1_name if p1_won else p2_name
             loser_name  = p2_name if p1_won else p1_name
-            print(f"  Heath vs {loser_name} → {winner_name}")
+            print(f"  {p1_name} vs {p2_name} → {winner_name}")
         return p1_id if p1_won else p2_id
 
     def record_bye(self, player_id, round_number):
@@ -886,24 +877,31 @@ class Tournament:
                 f"  {delta_str(d2)}  {C.DIM}{e2:>6.0f}{C.RESET}"
             )
 
-    def print_standings(self, top_cut, long_line=72, short_line=70):
+    def print_standings(self, top_cut, width=81):
+        """
+        Prints standings with a line to separate the top top_cut
+
+        :param top_cut int: the index to place the top cut line after
+        :param width int: max length to print a line
+        """
         standings = self.get_standings_df()
-        width = 72
+        front_space = "  "
+        width_minus_front_space = width - len(front_space)
 
         print()
         print(f"{C.BOLD}{C.WHITE}{'─'*width}{C.RESET}")
-        print(f"{C.BOLD}{C.PURPLE}  {'STANDINGS':^{width-2}}{C.RESET}")
+        print(f"{C.BOLD}{C.PURPLE}{front_space}{'STANDINGS':^{width_minus_front_space}}{C.RESET}")
         print(f"{C.BOLD}{C.WHITE}{'─'*width}{C.RESET}")
         header = (
             f"  {'#':>3}  {'Name':<16}  {'Record':^7}  "
             f"{'Pts':>3}  {'Elo':>6}  {'Rating bar':<18}  {'OWP':<6}  {'OOWP':<6}"
         )
         print(f"{C.DIM}{header}{C.RESET}")
-        print(f"{C.GREY}  {'─'*67}{C.RESET}")
+        print(f"{C.GREY}{front_space}{'─'*width_minus_front_space}{C.RESET}")
 
         for i, row in standings.iterrows():
             if i == top_cut:
-                print(f"{C.GREY}  {'╌'*67}  ← top-cut line{C.RESET}")
+                print(f"{C.GREY}{front_space}{'╌'*width_minus_front_space}  ← top-cut line{C.RESET}")
 
             pid = row["player_id"]
             entry = self.registry.get(pid)
@@ -915,7 +913,7 @@ class Tournament:
             name = visual_ljust(row["name"][:16], 16)
 
             print(
-                f"  {rank:>3}  {col}{name}{C.RESET}"
+                f"  {rank:>3}{front_space}{col}{name}{C.RESET}"
                 f"  {C.DIM}{record:^7}{C.RESET}"
                 f"  {C.BOLD}{int(row['match_points']):>3}{C.RESET}"
                 f"  {col}{elo:>6.1f}{C.RESET}"
@@ -1286,7 +1284,7 @@ for _ in range(total_rounds):
     # tournament.print_round_results(round_number)
 
 # ── Final standings ─────────────────────────────────────
-tournament.print_standings(top_cut)
+tournament.print_standings(top_cut, 81)
 
 # ── Elo insights ─────────────────────────────────────────
 # print_elo_insights(registry, tournament)
