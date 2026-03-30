@@ -631,6 +631,11 @@ class Tournament:
             datetime.now(UTC).strftime("%Y%m%d_%H%M%S") + "_" + name[:20]
         )
         self.round_deltas: Dict[int, List[dict]] = {}
+        # ── Manual result players ────────────────────────────
+        # Any player_id added to this set will trigger an interactive
+        # prompt during simulate_round_match instead of using Elo simulation.
+        # Press Enter at the prompt to fall back to Elo simulation for that match.
+        self.manual_players: set = set()
 
     # ── Player management ───────────────────────────────────
     def add_player(self, player_id: str, name: str):
@@ -679,11 +684,62 @@ class Tournament:
             }
         )
 
+    def _prompt_manual_result(self, p1_id: str, p2_id: str) -> Optional[bool]:
+        """
+        Prompt the user to enter a result for a match involving a manual player.
+        Returns True if p1 won, False if p2 won, or None to fall back to Elo sim.
+        """
+        p1_name = self.players[p1_id].name
+        p2_name = self.players[p2_id].name
+        p1_elo  = self.registry.get(p1_id).elo
+        p2_elo  = self.registry.get(p2_id).elo
+        exp_p1  = expected_score(p1_elo, p2_elo)
+
+        print()
+        print(f"{C.BOLD}{C.YELLOW}  ┌─ MANUAL RESULT REQUIRED ─────────────────────────┐{C.RESET}")
+        print(
+            f"{C.BOLD}{C.YELLOW}  │{C.RESET}  "
+            f"[1] {C.CYAN}{p1_name}{C.RESET} ({p1_elo:.0f} Elo, {exp_p1:.0%} win prob)"
+        )
+        print(
+            f"{C.BOLD}{C.YELLOW}  │{C.RESET}  "
+            f"[2] {C.CYAN}{p2_name}{C.RESET} ({p2_elo:.0f} Elo, {1-exp_p1:.0%} win prob)"
+        )
+        print(f"{C.BOLD}{C.YELLOW}  │{C.RESET}  {C.DIM}[Enter] Simulate with Elo{C.RESET}")
+        print(f"{C.BOLD}{C.YELLOW}  └───────────────────────────────────────────────────┘{C.RESET}")
+
+        while True:
+            try:
+                choice = input("  Winner (1 / 2 / Enter): ").strip()
+            except EOFError:
+                # Non-interactive environment — fall back to simulation
+                return None
+            if choice == "":
+                return None
+            if choice == "1":
+                return True
+            if choice == "2":
+                return False
+            print(f"  {C.RED}Invalid input — enter 1, 2, or press Enter.{C.RESET}")
+
     def simulate_round_match(self, p1_id, p2_id, round_number):
-        a_entry = self.registry.get(p1_id)
-        b_entry = self.registry.get(p2_id)
-        exp = expected_score(a_entry.elo, b_entry.elo)
-        p1_won = random.random() < exp
+        # ── Manual result check ──────────────────────────────
+        # If either player is in manual_players, prompt for the result.
+        # Pressing Enter at the prompt falls back to Elo-based simulation.
+        if p1_id in self.manual_players or p2_id in self.manual_players:
+            p1_won = self._prompt_manual_result(p1_id, p2_id)
+            if p1_won is None:
+                # User chose to simulate — fall through to Elo logic below
+                a_entry = self.registry.get(p1_id)
+                b_entry = self.registry.get(p2_id)
+                exp = expected_score(a_entry.elo, b_entry.elo)
+                p1_won = random.random() < exp
+        else:
+            a_entry = self.registry.get(p1_id)
+            b_entry = self.registry.get(p2_id)
+            exp = expected_score(a_entry.elo, b_entry.elo)
+            p1_won = random.random() < exp
+
         self.record_match(p1_id, p2_id, p1_won, round_number)
         p1_name = self.players[p1_id].name
         p2_name = self.players[p2_id].name
@@ -1039,11 +1095,35 @@ class SingleEliminationBracket:
         matches = self.rounds.get(round_number)
         target = next((m for m in matches if m.match_number == match_number), None)
         p1, p2 = target.player1_id, target.player2_id
-        winner = self.registry.simulate_match(
-            p1, p2,
-            tournament_id=self.tournament.tournament_id,
-            round_number=round_number,
-        )
+
+        # ── Manual result check (bracket) ────────────────────
+        # Reuse the same manual_players set from the swiss tournament so
+        # manual players are prompted during the elimination bracket too.
+        manual = self.tournament.manual_players
+        if p1 in manual or p2 in manual:
+            p1_won = self.tournament._prompt_manual_result(p1, p2)
+            if p1_won is None:
+                # Fall back to Elo simulation
+                winner = self.registry.simulate_match(
+                    p1, p2,
+                    tournament_id=self.tournament.tournament_id,
+                    round_number=round_number,
+                )
+            else:
+                winner = p1 if p1_won else p2
+                loser  = p2 if p1_won else p1
+                self.registry.play_match(
+                    winner, loser, a_won=True,
+                    tournament_id=self.tournament.tournament_id,
+                    round_number=round_number,
+                )
+        else:
+            winner = self.registry.simulate_match(
+                p1, p2,
+                tournament_id=self.tournament.tournament_id,
+                round_number=round_number,
+            )
+
         target.winner_id = winner
         self._try_advance_round()
         return winner
@@ -1258,6 +1338,11 @@ tournament = Tournament(registry, name=tournament_name, tournament_id=tournament
 
 for stable_id, display in players_raw:
     tournament.add_player(stable_id, display)
+
+# ── Register players who need manual result entry ────────
+# Add any player_id to this set to be prompted for their match results
+# instead of having them decided by Elo simulation.
+tournament.manual_players.add("heath_local")
 
 total_rounds, phase1, point_threshold, top_cut = get_rounds(len(players_raw))
 
