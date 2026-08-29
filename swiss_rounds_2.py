@@ -1310,7 +1310,7 @@ def print_elo_insights(registry: PlayerRegistry, tournament: Tournament):
 players_raw = []   # list of (player_id, display_name)
 try:
     names_df = pd.read_csv("swiss_names.csv")
-    for _, row in names_df.iloc[0:63].iterrows():
+    for _, row in names_df.iloc[0:394].iterrows(): # same number as world champs 2026
         first = str(row.get("first_name", "")).strip()
         last  = str(row.get("last_name", "")).strip()
         cc    = str(row.get("country_code", "XX")).strip()
